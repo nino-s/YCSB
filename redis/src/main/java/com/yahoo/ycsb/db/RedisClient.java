@@ -30,8 +30,9 @@ import com.yahoo.ycsb.DBException;
 import com.yahoo.ycsb.Status;
 import com.yahoo.ycsb.StringByteIterator;
 
-import redis.clients.jedis.Jedis;
 import redis.clients.jedis.Protocol;
+import redis.clients.jedis.JedisCluster;
+import redis.clients.jedis.HostAndPort;
 
 import java.util.HashMap;
 import java.util.Iterator;
@@ -39,6 +40,9 @@ import java.util.List;
 import java.util.Properties;
 import java.util.Set;
 import java.util.Vector;
+import java.util.HashSet;
+
+import static java.lang.System.getProperties;
 
 /**
  * YCSB binding for <a href="http://redis.io/">Redis</a>.
@@ -47,7 +51,7 @@ import java.util.Vector;
  */
 public class RedisClient extends DB {
 
-  private Jedis jedis;
+  private JedisCluster jedisCluster;
 
   public static final String HOST_PROPERTY = "redis.host";
   public static final String PORT_PROPERTY = "redis.port";
@@ -67,17 +71,18 @@ public class RedisClient extends DB {
     }
     String host = props.getProperty(HOST_PROPERTY);
 
-    jedis = new Jedis(host, port);
-    jedis.connect();
+    HashSet jedisClusterNodes = new HashSet();
+    jedisClusterNodes.add(new HostAndPort(host, port));
+    jedisCluster = new JedisCluster(jedisClusterNodes);
 
     String password = props.getProperty(PASSWORD_PROPERTY);
     if (password != null) {
-      jedis.auth(password);
+      jedisCluster.auth(password);
     }
   }
 
   public void cleanup() throws DBException {
-    jedis.disconnect();
+    jedisCluster.close();
   }
 
   /*
@@ -96,11 +101,11 @@ public class RedisClient extends DB {
   public Status read(String table, String key, Set<String> fields,
       HashMap<String, ByteIterator> result) {
     if (fields == null) {
-      StringByteIterator.putAllAsByteIterators(result, jedis.hgetAll(key));
+      StringByteIterator.putAllAsByteIterators(result, jedisCluster.hgetAll(key));
     } else {
       String[] fieldArray =
           (String[]) fields.toArray(new String[fields.size()]);
-      List<String> values = jedis.hmget(key, fieldArray);
+      List<String> values = jedisCluster.hmget(key, fieldArray);
 
       Iterator<String> fieldIterator = fields.iterator();
       Iterator<String> valueIterator = values.iterator();
@@ -117,9 +122,9 @@ public class RedisClient extends DB {
   @Override
   public Status insert(String table, String key,
       HashMap<String, ByteIterator> values) {
-    if (jedis.hmset(key, StringByteIterator.getStringMap(values))
+    if (jedisCluster.hmset(key, StringByteIterator.getStringMap(values))
         .equals("OK")) {
-      jedis.zadd(INDEX_KEY, hash(key), key);
+      jedisCluster.zadd(INDEX_KEY, hash(key), key);
       return Status.OK;
     }
     return Status.ERROR;
@@ -127,21 +132,21 @@ public class RedisClient extends DB {
 
   @Override
   public Status delete(String table, String key) {
-    return jedis.del(key) == 0 && jedis.zrem(INDEX_KEY, key) == 0 ? Status.ERROR
+    return jedisCluster.del(key) == 0 && jedisCluster.zrem(INDEX_KEY, key) == 0 ? Status.ERROR
         : Status.OK;
   }
 
   @Override
   public Status update(String table, String key,
       HashMap<String, ByteIterator> values) {
-    return jedis.hmset(key, StringByteIterator.getStringMap(values))
+    return jedisCluster.hmset(key, StringByteIterator.getStringMap(values))
         .equals("OK") ? Status.OK : Status.ERROR;
   }
 
   @Override
   public Status scan(String table, String startkey, int recordcount,
       Set<String> fields, Vector<HashMap<String, ByteIterator>> result) {
-    Set<String> keys = jedis.zrangeByScore(INDEX_KEY, hash(startkey),
+    Set<String> keys = jedisCluster.zrangeByScore(INDEX_KEY, hash(startkey),
         Double.POSITIVE_INFINITY, 0, recordcount);
 
     HashMap<String, ByteIterator> values;
