@@ -42,8 +42,6 @@ import java.util.Set;
 import java.util.Vector;
 import java.util.HashSet;
 
-import static java.lang.System.getProperties;
-
 /**
  * YCSB binding for <a href="http://redis.io/">Redis</a>.
  *
